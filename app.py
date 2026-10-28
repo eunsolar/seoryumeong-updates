@@ -265,10 +265,31 @@ class App(tk.Tk):
                 elif k=='count':self.status.set(f'키워드에 맞는 파일 {v}개 검색됨. 분석 중...')
                 elif k=='update_info':
                     if v.get('available'):
-                        if messagebox.askyesno('서류멍 새 버전',f"새 버전 {v['tag']}이 공개됐어요.\nGitHub 공식 다운로드 페이지를 열까요?"):
-                            import webbrowser
-                            webbrowser.open(v['url'])
+                        if messagebox.askyesno('서류멍 원클릭 업데이트',f"새 버전 {v['tag']}이 공개됐어요.\n업데이트를 다운로드하고 프로그램을 다시 실행할까요?\n\n저장하지 않은 분석 결과는 종료 시 사라집니다."):
+                            self.status.set('새 버전 다운로드 중...')
+                            self.go.configure(state='disabled')
+                            def update_work():
+                                try:
+                                    import updater
+                                    payload=updater.download_update(v)
+                                    self.q.put(('update_ready',payload))
+                                except Exception as ex:
+                                    self.q.put(('update_failed',str(ex)))
+                            threading.Thread(target=update_work,daemon=True).start()
                     else:self.status.set('서류멍 최신 버전 사용 중')
+                elif k=='update_ready':
+                    try:
+                        import updater
+                        updater.launch_installer(*v)
+                        self.destroy()
+                        return
+                    except Exception as ex:
+                        self.go.configure(state='normal')
+                        messagebox.showerror('업데이트 실행 오류',str(ex))
+                elif k=='update_failed':
+                    self.go.configure(state='normal')
+                    self.status.set('업데이트 다운로드 실패')
+                    messagebox.showerror('업데이트 실패',v)
                 elif k=='update_error':
                     self.status.set('업데이트 확인 불가 (인터넷 연결 확인)')
                 elif k=='progress':self.progress['value']=v[0]*100/max(1,v[1])
