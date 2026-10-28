@@ -22,32 +22,57 @@ def file_name(path,kind):
     return m.group(1) if m else ''
 def read_text(path):
     import fitz
-    from PIL import Image,ImageOps
+    from PIL import Image, ImageOps
     import pytesseract
     exe=Path(r'C:\Program Files\Tesseract-OCR\tesseract.exe')
     if os.name=='nt' and exe.exists():pytesseract.pytesseract.tesseract_cmd=str(exe)
-    def ocr(im):return pytesseract.image_to_string(ImageOps.exif_transpose(im).convert('RGB'),lang='kor+eng')
+    def ocr(im):
+        return pytesseract.image_to_string(ImageOps.exif_transpose(im).convert('RGB'),lang='kor+eng')
     if path.suffix.lower()=='.pdf':
-        text=[]
+        parts=[]
         with fitz.open(str(path)) as pdf:
             for page in pdf:
-                t=page.get_text()
-                if len(t.strip())>15:text.append(t)
+                t=page.get_text(sort=True)
+                # Some PDFs contain selectable labels but the resident number is drawn as an image.
+                # Retry OCR when the text layer does not contain a reliable resident-number candidate.
+                if parse_resident(t):
+                    parts.append(t)
                 else:
-                    from PIL import Image
-                    px=page.get_pixmap(matrix=fitz.Matrix(2,2),alpha=False)
-                    text.append(ocr(Image.frombytes('RGB',(px.width,px.height),px.samples)))
-        return '\n'.join(text)
+                    try:
+                        px=page.get_pixmap(matrix=fitz.Matrix(2.5,2.5),alpha=False)
+                        raster=Image.frombytes('RGB',(px.width,px.height),px.samples)
+                        parts.append(t+'\n'+ocr(raster))
+                    except Exception:
+                        if t.strip():parts.append(t)
+                        else:raise
+        return '\n'.join(parts)
     with Image.open(path) as im:return ocr(im)
+
 def parse_resident(text):
-    # Require contextual hint or explicitly formatted 6-7 digits, not arbitrary ID-like numbers.
+    """Extract possible RRNs only near their label; return unique 6-7 formatted values.
+
+    Handles line breaks, unicode dashes and spaced OCR digits. Does not validate identity.
+    """
+    labels=re.compile(r'주\s*민\s*(?:등\s*록\s*)?(?:번\s*호|번\s*호\s*:)'
+                      r'|주\s*민\s*등\s*록\s*번\s*호',re.I)
+    numbers=re.compile(r'(?<!\d)(?:\d[ \t\r\n\u00a0]*){6}[-–—−‐‑﹣－]?'
+                       r'[ \t\r\n\u00a0]*(?:\d[ \t\r\n\u00a0]*){7}(?!\d)')
     matches=[]
-    for m in re.finditer(r'(?<!\d)(\d{6})\s*[-–]?\s*([1-8]\d{6})(?!\d)',text):
-        before=text[max(0,m.start()-70):m.start()]
-        after=text[m.end():m.end()+15]
-        if re.search(r'주민\s*등록\s*번호|주민\s*번호|주민\s*등록|생년월일',before+after) or re.search(r'[-–]',m.group(0)):
-            matches.append(f'{m.group(1)}-{m.group(2)}')
+    for label in labels.finditer(text):
+        area=text[label.end():label.end()+180]
+        for m in numbers.finditer(area):
+            # Stop at next unrelated field label; avoid concatenating multiple fields.
+            context=area[:m.start()]
+            if re.search(r'\b(?:전화번호|연락처|주소|계좌번호)\s*[:：]',context):break
+            digits=re.sub(r'\D','',m.group())
+            if len(digits)==13 and digits[6] in '12345678':
+                matches.append(digits[:6]+'-'+digits[6:])
+                break
+    # Independently detect explicitly hyphenated RRNs when the PDF strips the label.
+    for m in re.finditer(r'(?<!\d)(\d{6})\s*[-–—−‐‑﹣－]\s*([1-8]\d{6})(?!\d)',text):
+        matches.append(m.group(1)+'-'+m.group(2))
     return list(dict.fromkeys(matches))
+
 def parse_bank(text):
     compact=norm(text)
     bs=[b for b in BANKS if norm(b) in compact]
@@ -75,9 +100,11 @@ def analyze(files,rules,selected,notify):
         if not n:unmatched.append((str(p),'파일명에서 이름 확인 불가'));continue
         if k=='contract':
             candidates=sorted(x for x in full if x.startswith(n))
-            if len(candidates)!=1:
-                unmatched.append((str(p),f'계약서 이름 {n}: 일치하는 전체 이름 {len(candidates)}개'));continue
-            n=candidates[0]
+            if len(candidates)>1:
+                unmatched.append((str(p),f'계약서 이름 {n}: 전체 이름 후보 여러 명, 자동 연결 제외'));continue
+            # Keep unmatched partial-name contracts as standalone review rows, rather than
+            # silently skipping their resident-number extraction.
+            n=candidates[0] if candidates else n
         people[n][k].append(p)
     rows=[];total=sum(len(x.get('contract',[]))*(('resident' in selected)) + len(x.get('bank',[]))*(('bank' in selected or 'account' in selected)) for x in people.values());done=0
     for name,kinds in sorted(people.items()):
@@ -115,12 +142,12 @@ def analyze(files,rules,selected,notify):
 
 class App(tk.Tk):
     def __init__(self):
-        super().__init__();self.title('서류멍 - 문서 정보 추출기 v4.2');self.geometry('1040x820');self.minsize(850,650)
+        super().__init__();self.title('서류멍 - 문서 정보 추출기');self.geometry('1040x820');self.minsize(850,650)
         self.files=[];self.folders=[];self.scan_subdirs=tk.BooleanVar(value=False);self.rows=[];self.unmatched=[];self.q=queue.Queue();self.out=tk.StringVar(value=str(Path.home()/'Documents'))
         self.rules={k:tk.StringVar(value=v) for k,v in DEFAULT.items()}
         self.fields={k:tk.BooleanVar(value=k in ('name','resident','bank','account','status')) for k in FIELDS}
         self.status=tk.StringVar(value='분석할 폴더를 추가하세요. 원본 파일은 변경하지 않습니다.')
-        self.build();self.after(120,self.poll)
+        self.build();self.after(120,self.poll);self.after(1600,self.check_update)
         try:self.iconbitmap(str((Path(getattr(__import__('sys'), '_MEIPASS', Path(__file__).resolve().parent)) / 'dog.ico')))
         except Exception:pass
     def build(self):
@@ -162,10 +189,8 @@ class App(tk.Tk):
         def work():
             try:
                 import updater
-                result=updater.check_and_install()
-                self.q.put(('update',result))
-            except Exception as ex:self.q.put(('update',str(ex)))
-        self.status.set('업데이트 확인 중...')
+                self.q.put(('update_info',updater.check_for_update()))
+            except Exception as ex:self.q.put(('update_error',str(ex)))
         threading.Thread(target=work,daemon=True).start()
     def discover(self,roots,recurse,rules):
         found=[];seen=set()
@@ -234,7 +259,14 @@ class App(tk.Tk):
                 k,v=self.q.get_nowait()
                 if k=='status':self.status.set(v)
                 elif k=='count':self.status.set(f'키워드에 맞는 파일 {v}개 검색됨. 분석 중...')
-                elif k=='update':messagebox.showinfo('업데이트',v);self.status.set(v)
+                elif k=='update_info':
+                    if v.get('available'):
+                        if messagebox.askyesno('서류멍 새 버전',f"새 버전 {v['tag']}이 공개됐어요.\nGitHub 공식 다운로드 페이지를 열까요?"):
+                            import webbrowser
+                            webbrowser.open(v['url'])
+                    else:self.status.set('서류멍 최신 버전 사용 중')
+                elif k=='update_error':
+                    self.status.set('업데이트 확인 불가 (인터넷 연결 확인)')
                 elif k=='progress':self.progress['value']=v[0]*100/max(1,v[1])
                 elif k=='done':
                     self.rows,self.unmatched=v;self.draw();self.go.configure(state='normal');self.save.configure(state='normal');self.progress['value']=100
