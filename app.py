@@ -21,7 +21,6 @@ def file_name(path,kind):
     else:m=re.match(r'^([가-힣]{2,5})(?=[ _\-(.]|$)',path.stem)
     return m.group(1) if m else ''
 def read_text(path):
-    import fitz
     from PIL import Image, ImageOps
     import pytesseract
     exe=Path(r'C:\Program Files\Tesseract-OCR\tesseract.exe')
@@ -29,6 +28,7 @@ def read_text(path):
     def ocr(im):
         return pytesseract.image_to_string(ImageOps.exif_transpose(im).convert('RGB'),lang='kor+eng')
     if path.suffix.lower()=='.pdf':
+        import fitz
         parts=[]
         with fitz.open(str(path)) as pdf:
             for page in pdf:
