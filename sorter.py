@@ -10,7 +10,7 @@ def get_name(path):
     stem=path.stem
     m=re.search(r'_([가-힣]{2,5})_\(',stem)
     if m:return m.group(1)
-    m=re.search(r'^([가-힣]{2,5}|[가-힣]{2}0)(?=[ _\\-(.]|$)',stem)
+    m=re.search(r'^([가-힣]{2,5}|[가-힣]{2}0)(?=[ _.(-]|$)',stem)
     if m:return m.group(1)
     return ''
 def classify(paths):
