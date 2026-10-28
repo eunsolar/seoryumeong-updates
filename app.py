@@ -156,6 +156,7 @@ class App(tk.Tk):
         ttk.Button(bar,text='폴더 추가',command=self.add_folder).pack(side='left')
         ttk.Button(bar,text='선택 폴더 제거',command=self.remove_folder).pack(side='left',padx=6)
         ttk.Button(bar,text='폴더 목록 비우기',command=self.clear_folders).pack(side='left')
+        ttk.Button(bar,text='사람별 폴더 정리',command=self.open_sorter).pack(side='left',padx=12)
         ttk.Button(bar,text='업데이트 확인',command=self.check_update).pack(side='right')
         frm=ttk.LabelFrame(wrap,text='분석할 폴더 (여러 개 추가 가능)');frm.pack(fill='both',expand=True,pady=6)
         self.folderlist=tk.Listbox(frm,selectmode='extended',height=5);self.folderlist.pack(side='left',fill='both',expand=True)
@@ -175,6 +176,9 @@ class App(tk.Tk):
         self.tree=ttk.Treeview(table,show='headings',height=8);self.tree.pack(side='left',fill='both',expand=True)
         ys=ttk.Scrollbar(table,orient='vertical',command=self.tree.yview);ys.pack(side='right',fill='y');self.tree.configure(yscrollcommand=ys.set)
         self.tree.bind('<Double-1>',self.edit)
+    def open_sorter(self):
+        from sorter import SorterWindow
+        SorterWindow(self)
     def add_folder(self):
         path=filedialog.askdirectory(title='분석할 폴더 추가')
         if path and Path(path) not in self.folders:
