@@ -268,15 +268,29 @@ class App(tk.Tk):
                         if messagebox.askyesno('서류멍 원클릭 업데이트',f"새 버전 {v['tag']}이 공개됐어요.\n업데이트를 다운로드하고 프로그램을 다시 실행할까요?\n\n저장하지 않은 분석 결과는 종료 시 사라집니다."):
                             self.status.set('새 버전 다운로드 중...')
                             self.go.configure(state='disabled')
+                            self.update_window=tk.Toplevel(self)
+                            self.update_window.title('서류멍 업데이트 중')
+                            self.update_window.geometry('410x155')
+                            self.update_window.transient(self)
+                            self.update_window.protocol('WM_DELETE_WINDOW',lambda: None)
+                            self.update_window.grab_set()
+                            self.update_label=tk.StringVar(value='새 버전을 다운로드하고 있어요...')
+                            ttk.Label(self.update_window,textvariable=self.update_label).pack(padx=18,pady=(20,10))
+                            self.update_bar=ttk.Progressbar(self.update_window,mode='determinate',maximum=100)
+                            self.update_bar.pack(fill='x',padx=18,pady=7)
                             def update_work():
                                 try:
                                     import updater
-                                    payload=updater.download_update(v)
+                                    payload=updater.download_update(v, lambda pct,stage:self.q.put(('update_progress',(pct,stage))))
                                     self.q.put(('update_ready',payload))
                                 except Exception as ex:
                                     self.q.put(('update_failed',str(ex)))
                             threading.Thread(target=update_work,daemon=True).start()
                     else:self.status.set('서류멍 최신 버전 사용 중')
+                elif k=='update_progress':
+                    if hasattr(self,'update_bar') and self.update_bar.winfo_exists():
+                        self.update_bar['value']=v[0]
+                        self.update_label.set(f'{v[1]} ({v[0]}%)' if v[0] else v[1])
                 elif k=='update_ready':
                     try:
                         import updater
@@ -284,9 +298,11 @@ class App(tk.Tk):
                         self.destroy()
                         return
                     except Exception as ex:
+                        if hasattr(self,'update_window') and self.update_window.winfo_exists():self.update_window.destroy()
                         self.go.configure(state='normal')
                         messagebox.showerror('업데이트 실행 오류',str(ex))
                 elif k=='update_failed':
+                    if hasattr(self,'update_window') and self.update_window.winfo_exists():self.update_window.destroy()
                     self.go.configure(state='normal')
                     self.status.set('업데이트 다운로드 실패')
                     messagebox.showerror('업데이트 실패',v)
